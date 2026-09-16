@@ -3,93 +3,123 @@
 namespace App\Http\Controllers;
 
 use App\Models\Student;
+use App\Models\ClassModel as Classes;
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
 class StudentController extends Controller
 {
-    // Menampilkan semua siswa
-    public function index()
+    public function index(Request $request)
     {
-        $students = Student::with(['user', 'class'])->latest()->get();
+        $query = Student::with(['class', 'user']);
 
-        return response()->json([
-            'success' => true,
-            'data' => $students
-        ]);
+        if ($request->filled('search')) {
+            $search = $request->search;
+
+            $query->where(function ($q) use ($search) {
+                $q->where('nama', 'like', '%' . $search . '%')
+                  ->orWhere('nis', 'like', '%' . $search . '%');
+            });
+        }
+
+        if ($request->filled('class_id')) {
+            $query->where('class_id', $request->class_id);
+        }
+
+        $students = $query->latest()->paginate(10)->withQueryString();
+        $classes = Classes::all();
+
+        return view('students.index', compact('students', 'classes'));
     }
 
-    // Menambahkan siswa
+    public function create()
+    {
+        $classes = Classes::all();
+
+        return view('students.create', compact('classes'));
+    }
+
     public function store(Request $request)
     {
-        $request->validate([
-            'user_id' => 'required|exists:users,id',
+        $validated = $request->validate([
+            'nama' => 'required|string|max:255',
             'nis' => 'required|string|max:50|unique:students,nis',
-            'nama' => 'required|string|max:100',
             'class_id' => 'required|exists:classes,id',
+            'email' => 'required|email|max:255|unique:users,email',
+            'password' => 'required|string|min:6',
         ]);
 
-        $student = Student::create([
-            'user_id' => $request->user_id,
-            'nis' => $request->nis,
-            'nama' => $request->nama,
-            'class_id' => $request->class_id,
-        ]);
+        DB::transaction(function () use ($validated) {
+            $user = User::create([
+                'name' => $validated['nama'],
+                'email' => $validated['email'],
+                'password' => Hash::make($validated['password']),
+                'role_id' => 2,
+            ]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Data siswa berhasil ditambahkan',
-            'data' => $student
-        ], 201);
+            Student::create([
+                'user_id' => $user->id,
+                'nis' => $validated['nis'],
+                'nama' => $validated['nama'],
+                'class_id' => $validated['class_id'],
+            ]);
+        });
+
+        return redirect()->route('students.index')
+            ->with('success', 'Data siswa berhasil ditambahkan!');
     }
 
-    // Menampilkan detail siswa
-    public function show($id)
+    public function edit($id)
     {
-        $student = Student::with(['user', 'class', 'attendances'])
-            ->findOrFail($id);
+        $student = Student::with('user')->findOrFail($id);
+        $classes = Classes::all();
 
-        return response()->json([
-            'success' => true,
-            'data' => $student
-        ]);
+        return view('students.edit', compact('student', 'classes'));
     }
 
-    // Mengubah data siswa
     public function update(Request $request, $id)
     {
-        $student = Student::findOrFail($id);
+        $student = Student::with('user')->findOrFail($id);
 
-        $request->validate([
-            'user_id' => 'required|exists:users,id',
-            'nis' => 'required|string|max:50|unique:students,nis,' . $id,
-            'nama' => 'required|string|max:100',
+        $validated = $request->validate([
+            'nama' => 'required|string|max:255',
+            'nis' => 'required|string|max:50|unique:students,nis,' . $student->id,
             'class_id' => 'required|exists:classes,id',
         ]);
 
-        $student->update([
-            'user_id' => $request->user_id,
-            'nis' => $request->nis,
-            'nama' => $request->nama,
-            'class_id' => $request->class_id,
-        ]);
+        DB::transaction(function () use ($student, $validated) {
+            $student->update([
+                'nama' => $validated['nama'],
+                'nis' => $validated['nis'],
+                'class_id' => $validated['class_id'],
+            ]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Data siswa berhasil diperbarui',
-            'data' => $student
-        ]);
+            if ($student->user) {
+                $student->user->update([
+                    'name' => $validated['nama'],
+                ]);
+            }
+        });
+
+        return redirect()->route('students.index')
+            ->with('success', 'Data siswa berhasil diperbarui!');
     }
 
-    // Menghapus siswa
     public function destroy($id)
     {
-        $student = Student::findOrFail($id);
+        $student = Student::with('user')->findOrFail($id);
 
-        $student->delete();
+        DB::transaction(function () use ($student) {
+            if ($student->user) {
+                $student->user->delete();
+            }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Data siswa berhasil dihapus'
-        ]);
+            $student->delete();
+        });
+
+        return redirect()->route('students.index')
+            ->with('success', 'Data siswa berhasil dihapus!');
     }
 }

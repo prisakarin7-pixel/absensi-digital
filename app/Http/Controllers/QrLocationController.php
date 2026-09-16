@@ -7,97 +7,67 @@ use Illuminate\Http\Request;
 
 class QrLocationController extends Controller
 {
-    // Menampilkan semua lokasi QR
     public function index()
     {
-        $locations = QrLocation::latest()->get();
+        $locations = QrLocation::withCount('qrTokens')
+            ->latest()
+            ->get();
 
-        return response()->json([
-            'success' => true,
-            'data' => $locations
-        ]);
+        return view('qr-location.index', compact('locations'));
     }
 
-    // Menambahkan lokasi QR
     public function store(Request $request)
     {
-        $request->validate([
-            'nama_lokasi' => 'required|string|max:100',
-            'kode_lokasi' => 'required|string|max:50|unique:qr_locations,kode_lokasi',
-            'latitude' => 'nullable|numeric',
-            'longitude' => 'nullable|numeric',
-            'radius' => 'required|integer|min:1',
-            'status' => 'boolean',
+        $validated = $request->validate([
+            'nama_lokasi' => 'required|string|max:255',
+            'kode_lokasi' => 'required|string|max:100|unique:qr_locations,kode_lokasi',
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+            'radius' => 'required|numeric|min:1',
+            'status' => 'required|boolean',
         ]);
 
-        $location = QrLocation::create([
-            'nama_lokasi' => $request->nama_lokasi,
-            'kode_lokasi' => $request->kode_lokasi,
-            'latitude' => $request->latitude,
-            'longitude' => $request->longitude,
-            'radius' => $request->radius,
-            'status' => $request->status ?? true,
-        ]);
+        QrLocation::create($validated);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Lokasi QR berhasil ditambahkan',
-            'data' => $location
-        ], 201);
+        return redirect()
+            ->route('qr-locations.index')
+            ->with('success', 'Lokasi QR berhasil ditambahkan!');
     }
 
-    // Menampilkan detail lokasi QR
-    public function show($id)
-    {
-        $location = QrLocation::with('qrTokens')
-            ->findOrFail($id);
-
-        return response()->json([
-            'success' => true,
-            'data' => $location
-        ]);
-    }
-
-    // Mengubah lokasi QR
     public function update(Request $request, $id)
     {
         $location = QrLocation::findOrFail($id);
 
-        $request->validate([
-            'nama_lokasi' => 'required|string|max:100',
-            'kode_lokasi' => 'required|string|max:50|unique:qr_locations,kode_lokasi,' . $id,
-            'latitude' => 'nullable|numeric',
-            'longitude' => 'nullable|numeric',
-            'radius' => 'required|integer|min:1',
-            'status' => 'boolean',
+        $validated = $request->validate([
+            'nama_lokasi' => 'required|string|max:255',
+            'kode_lokasi' => 'required|string|max:100|unique:qr_locations,kode_lokasi,' . $location->id,
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+            'radius' => 'required|numeric|min:1',
+            'status' => 'required|boolean',
         ]);
 
-        $location->update([
-            'nama_lokasi' => $request->nama_lokasi,
-            'kode_lokasi' => $request->kode_lokasi,
-            'latitude' => $request->latitude,
-            'longitude' => $request->longitude,
-            'radius' => $request->radius,
-            'status' => $request->status ?? true,
-        ]);
+        $location->update($validated);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Lokasi QR berhasil diperbarui',
-            'data' => $location
-        ]);
+        return redirect()
+            ->route('qr-locations.index')
+            ->with('success', 'Lokasi QR berhasil diperbarui!');
     }
 
-    // Menghapus lokasi QR
     public function destroy($id)
     {
         $location = QrLocation::findOrFail($id);
 
+        if ($location->qrTokens()->exists()) {
+            return redirect()
+                ->route('qr-locations.index')
+                ->with('error', 'Lokasi tidak dapat dihapus karena masih memiliki QR Token.');
+        }
+
         $location->delete();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Lokasi QR berhasil dihapus'
-        ]);
+        return redirect()
+            ->route('qr-locations.index')
+            ->with('success', 'Lokasi QR berhasil dihapus!');
     }
 }

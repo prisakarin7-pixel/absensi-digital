@@ -9,33 +9,83 @@ use Carbon\Carbon;
 
 class AttendanceController extends Controller
 {
-    // Menampilkan data absensi
-    public function index()
+    public function index(Request $request)
     {
-        $attendances = Attendance::with([
-            'student',
-            'qrLocation'
-        ])->latest()->get();
+        $today = Carbon::today();
 
-        return response()->json([
-            'success' => true,
-            'data' => $attendances
+        $query = Attendance::with([
+            'student.class',
+            'qrLocation'
         ]);
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+
+            $query->whereHas('student', function ($q) use ($search) {
+                $q->where('nama', 'like', '%' . $search . '%')
+                  ->orWhere('nis', 'like', '%' . $search . '%');
+            });
+        }
+
+        if ($request->filled('tanggal')) {
+            $query->whereDate('tanggal', $request->tanggal);
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $attendances = $query
+            ->orderByDesc('tanggal')
+            ->orderByDesc('waktu')
+            ->paginate(10)
+            ->withQueryString();
+
+        $hadirToday = Attendance::whereDate('tanggal', $today)
+            ->where('status', 'hadir')
+            ->count();
+
+        $izinToday = Attendance::whereDate('tanggal', $today)
+            ->where('status', 'izin')
+            ->count();
+
+        $sakitToday = Attendance::whereDate('tanggal', $today)
+            ->where('status', 'sakit')
+            ->count();
+
+        $alphaToday = Attendance::whereDate('tanggal', $today)
+            ->where('status', 'alpha')
+            ->count();
+
+        $totalAttendanceToday = Attendance::whereDate('tanggal', $today)
+            ->count();
+
+        $attendancePercentage = $totalAttendanceToday > 0
+            ? round(($hadirToday / $totalAttendanceToday) * 100)
+            : 0;
+
+        return view('attendance.index', compact(
+            'attendances',
+            'hadirToday',
+            'izinToday',
+            'sakitToday',
+            'alphaToday',
+            'totalAttendanceToday',
+            'attendancePercentage'
+        ));
     }
 
-    // Melakukan absensi
     public function store(Request $request)
     {
-        $request->validate([
+        $validated = $request->validate([
             'student_id' => 'required|exists:students,id',
             'token' => 'required|string',
             'latitude' => 'required|numeric',
             'longitude' => 'required|numeric',
         ]);
 
-        // Cari token QR
         $qrToken = QrToken::with('qrLocation')
-            ->where('token', $request->token)
+            ->where('token', $validated['token'])
             ->first();
 
         if (!$qrToken) {
@@ -45,7 +95,6 @@ class AttendanceController extends Controller
             ], 404);
         }
 
-        // Cek status token
         if (!$qrToken->status) {
             return response()->json([
                 'success' => false,
@@ -53,7 +102,13 @@ class AttendanceController extends Controller
             ], 400);
         }
 
-        // Cek tanggal
+        if (!$qrToken->qrLocation) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Lokasi QR tidak ditemukan'
+            ], 404);
+        }
+
         $now = Carbon::now();
         $tanggal = $now->format('Y-m-d');
         $waktu = $now->format('H:i:s');
@@ -65,7 +120,6 @@ class AttendanceController extends Controller
             ], 400);
         }
 
-        // Cek waktu berlaku
         if (
             $waktu < $qrToken->waktu_mulai ||
             $waktu > $qrToken->waktu_berakhir
@@ -76,8 +130,7 @@ class AttendanceController extends Controller
             ], 400);
         }
 
-        // Cek apakah siswa sudah absen hari ini
-        $alreadyAbsent = Attendance::where('student_id', $request->student_id)
+        $alreadyAbsent = Attendance::where('student_id', $validated['student_id'])
             ->where('tanggal', $tanggal)
             ->exists();
 
@@ -88,15 +141,13 @@ class AttendanceController extends Controller
             ], 400);
         }
 
-        // Hitung jarak siswa dengan lokasi QR
         $distance = $this->calculateDistance(
-            $request->latitude,
-            $request->longitude,
+            $validated['latitude'],
+            $validated['longitude'],
             $qrToken->qrLocation->latitude,
             $qrToken->qrLocation->longitude
         );
 
-        // Cek radius
         if ($distance > $qrToken->qrLocation->radius) {
             return response()->json([
                 'success' => false,
@@ -105,16 +156,15 @@ class AttendanceController extends Controller
             ], 400);
         }
 
-        // Simpan absensi
         $attendance = Attendance::create([
-            'student_id' => $request->student_id,
+            'student_id' => $validated['student_id'],
             'tanggal' => $tanggal,
             'waktu' => $waktu,
             'status' => 'hadir',
             'qr_location_id' => $qrToken->qr_location_id,
-            'token' => $request->token,
-            'latitude' => $request->latitude,
-            'longitude' => $request->longitude,
+            'token' => $validated['token'],
+            'latitude' => $validated['latitude'],
+            'longitude' => $validated['longitude'],
         ]);
 
         return response()->json([
@@ -124,11 +174,10 @@ class AttendanceController extends Controller
         ], 201);
     }
 
-    // Menampilkan detail absensi
     public function show($id)
     {
         $attendance = Attendance::with([
-            'student',
+            'student.class',
             'qrLocation'
         ])->findOrFail($id);
 
@@ -138,20 +187,17 @@ class AttendanceController extends Controller
         ]);
     }
 
-    // Menghapus data absensi
     public function destroy($id)
     {
         $attendance = Attendance::findOrFail($id);
 
         $attendance->delete();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Data absensi berhasil dihapus'
-        ]);
+        return redirect()
+            ->route('attendance.index')
+            ->with('success', 'Data absensi berhasil dihapus!');
     }
 
-    // Menghitung jarak menggunakan koordinat GPS
     private function calculateDistance(
         $lat1,
         $lon1,

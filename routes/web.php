@@ -1,18 +1,59 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\StudentController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\QrLocationController;
+
+Route::get('/', function () {
+    return view('login');
+});
+
+Route::get('/login', function () {
+    return view('login');
+});
+
+Route::post('/login', function () {
+    return redirect('/dashboard');
+});
 
 /*
 |--------------------------------------------------------------------------
-| Web Routes
+| DASHBOARD
 |--------------------------------------------------------------------------
-|
-| Here is where you can register web routes for your application. These
-| routes are loaded by the RouteServiceProvider and all of them will
-| be assigned to the "web" middleware group. Make something great!
-|
 */
 
-Route::get('/', function () {
-    return view('welcome');
-});
+Route::get('/dashboard', [DashboardController::class, 'index'])
+    ->name('dashboard');
+
+/*
+|--------------------------------------------------------------------------
+| LOGOUT
+|--------------------------------------------------------------------------
+*/
+
+Route::post('/logout', function () {
+    auth()->logout();
+
+    request()->session()->invalidate();
+    request()->session()->regenerateToken();
+
+    return redirect('/login');
+})->name('logout');
+
+/*
+|--------------------------------------------------------------------------
+| CRUD DATA SISWA
+|--------------------------------------------------------------------------
+*/
+
+Route::resource('students', StudentController::class);
+
+/*
+|--------------------------------------------------------------------------
+| CRUD LOKASI QR
+|--------------------------------------------------------------------------
+*/
+
+Route::resource('qr-locations', QrLocationController::class)
+    ->except(['create', 'show', 'edit']);
